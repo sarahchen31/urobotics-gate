@@ -256,10 +256,14 @@ def filter_out_highest_peak_multidim(frame, res=69, percentile=10, custom_weight
     return overall_votes, cv.bitwise_and(frame, frame, mask=overall_mask)
 
 def analyse(frame):
-    mask = cv.inRange(frame, (100, 100, 100), (255, 255, 255))
-    masked_frame = cv.bitwise_and(frame, frame, mask=mask)
-    gray_filter = cv.cvtColor(masked_frame, cv.COLOR_BGR2GRAY)
-    
+    max_brightness = max([b for b in frame[:, :, 0][0]])
+    lowerbound = max(max_brightness - 30, 120)
+    upperbound = 255
+    # mask = cv.inRange(frame, (lowerbound, lowerbound, lowerbound), (max_brightness, max_brightness, max_brightness))
+    # masked_frame = cv.bitwise_and(frame, frame, mask=mask)
+    _,thresh = cv.threshold(frame,lowerbound, upperbound, cv.THRESH_BINARY)
+    gray_filter = cv.cvtColor(thresh, cv.COLOR_BGR2GRAY)
+
     cnt = cv.findContours(gray_filter, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)[-2]
     if len(cnt)>0:
         cnt_area = max(cnt, key=cv.contourArea)
@@ -277,31 +281,40 @@ def analyse(frame):
     #     cv.drawContours(masked_frame, cnt, i, color)
     #     cv.drawContours(masked_frame, hull_list, i, color)
     area_diff = []
-    threshold_area = 100
+    threshold_area = 50
     for i in range(len(cnt)):
         if cv.contourArea(cnt[i]) > threshold_area:
+            area_rect = cv.boundingRect(cnt[i])[-2] * cv.boundingRect(cnt[i])[-1]
             area_cnt = cv.contourArea(cnt[i])
-            area_hull = cv.contourArea(hull_list[i])
-            area_diff.append(abs(area_cnt - area_hull)) 
-    if area_diff:
-        min_i = area_diff.index(min(area_diff))
-        cv.drawContours(masked_frame, cnt, min_i, (0, 255, 0))
+            #area_hull = cv.contourArea(hull_list[i])
+            area_diff.append(abs(area_cnt - area_rect) / area_cnt) 
+    if len(area_diff) >= 2:
+        min_i1, min_i2 = area_diff.index(sorted(area_diff)[0]), area_diff.index(sorted(area_diff)[1])
+        (x1, y1, w1, h1) = cv.boundingRect(cnt[min_i1])
+        (x2, y2, w2, h2) = cv.boundingRect(cnt[min_i2])
+        cv.rectangle(thresh, (x1, y1), (x1+w1, y1+h1), (0,255,0), 2)
+        cv.rectangle(thresh, (x2, y2), (x2+w2, y2+h2), (0,255,0), 2)
 
-
-    return (masked_frame)
+    return thresh
 
 
 filter_peaks = init_filter_out_highest_peak(['hsv,', 'bgr', 'hsv'], 'hsv')
 agg_res = init_aggregate_rescaling()
 
+paused = False
+speed = 1
+
 while(cap.isOpened()):
-    ret, frame = cap.read()
+    if not paused:
+        for _ in range(speed):
+            ret, frame = cap.read()
     if ret:
         frame = rescale_frame(frame, 20)
 
         red = agg_res(frame)
         votes, multi_filter2 = filter_out_highest_peak_multidim(np.dstack([red, cv.cvtColor(red, cv.COLOR_BGR2HSV)]))
         multi_filter2 = multi_filter2[:, :, :3]
+        #print([multi_filter2[:, :, 0]])
 
         masked_filter = analyse(multi_filter2)
 
@@ -311,8 +324,15 @@ while(cap.isOpened()):
         cv.imshow('multi_filter2', multi_filter2)
         cv.imshow('masked_filter', masked_filter)
         #cv.imshow('approx', approx)
-    if cv.waitKey(1) & 0xFF == ord('q'):
+    key = cv.waitKey(30)
+    if key == ord('q') or key == 27:
         break
+    if key == ord('p'):
+        paused = not paused
+    if key == ord('i') and speed > 1:
+        speed -= 1
+    if key == ord('o'):
+        speed += 1
 
 cap.release()
 cv.destroyAllWindows()
